@@ -1,0 +1,7 @@
+{
+  "cls_token": "H",
+  "mask_token": "[MASK]",
+  "pad_token": "[PAD]",
+  "sep_token": "NH2",
+  "unk_token": "[UNK]"
+}

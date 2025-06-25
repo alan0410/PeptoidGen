@@ -1,0 +1,115 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Connected to base (Python 3.11.5)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "da4f8295-8869-4ebd-9158-35829e806854",
+   "metadata": {},
+   "outputs": [
+    {
+     "ename": "ModuleNotFoundError",
+     "evalue": "No module named 'token_id_convert_function'",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[1;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[1;31mModuleNotFoundError\u001b[0m                       Traceback (most recent call last)",
+      "File \u001b[1;32mc:\\Users\\G\\OneDrive\\바탕 화면\\KIST\\code\\PeptoidGen_ver2025\\PeptoidGen_TFR.py:28\u001b[0m\n\u001b[0;32m     25\u001b[0m \u001b[39mfrom\u001b[39;00m \u001b[39mtqdm\u001b[39;00m \u001b[39mimport\u001b[39;00m tqdm \n\u001b[0;32m     26\u001b[0m \u001b[39mimport\u001b[39;00m \u001b[39mre\u001b[39;00m\n\u001b[1;32m---> 28\u001b[0m \u001b[39mfrom\u001b[39;00m \u001b[39mtoken_id_convert_function\u001b[39;00m \u001b[39mimport\u001b[39;00m seq_list_to_ids\n\u001b[0;32m     29\u001b[0m \u001b[39mimport\u001b[39;00m \u001b[39mreward_function_multimodal\u001b[39;00m\n\u001b[0;32m     31\u001b[0m warnings\u001b[39m.\u001b[39mfilterwarnings(\u001b[39m'\u001b[39m\u001b[39mignore\u001b[39m\u001b[39m'\u001b[39m)\n",
+      "\u001b[1;31mModuleNotFoundError\u001b[0m: No module named 'token_id_convert_function'"
+     ]
+    }
+   ],
+   "source": [
+    "import torch\n",
+    "import torch.nn as nn\n",
+    "import torch.optim as optim\n",
+    "import torch.nn.functional as F\n",
+    "\n",
+    "from torch.optim.lr_scheduler import ExponentialLR\n",
+    "#from warmup_scheduler import GradualWarmupScheduler\n",
+    "\n",
+    "import torch.distributions as dist\n",
+    "from torch.utils.data import DataLoader, Dataset\n",
+    "\n",
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import seaborn as sns\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "import random\n",
+    "import math\n",
+    "import time\n",
+    "import warnings\n",
+    "from collections import deque, namedtuple\n",
+    "import pickle\n",
+    "\n",
+    "from tqdm import tqdm \n",
+    "import re\n",
+    "\n",
+    "from token_id_convert_function import seq_list_to_ids\n",
+    "import reward_function_multimodal\n",
+    "\n",
+    "warnings.filterwarnings('ignore')\n",
+    "from transformers import BertTokenizer\n",
+    "from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score\n",
+    "\n",
+    "tokenizer = BertTokenizer.from_pretrained('c:\\\\Users\\\\G\\\\OneDrive\\\\바탕 화면\\\\KIST\\\\code/saved_model/peptoidtokenizer', local_files_only=True)\n",
+    "\n",
+    "seed = 950410\n",
+    "random.seed(seed)\n",
+    "np.random.seed(seed)\n",
+    "torch.manual_seed(seed)\n",
+    "torch.cuda.manual_seed_all(seed) \n",
+    "#Please fix all seeds so that the reproducibility is ensured"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "ename": "ModuleNotFoundError",
+     "evalue": "No module named 'setting'",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[1;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[1;31mModuleNotFoundError\u001b[0m                       Traceback (most recent call last)",
+      "Cell \u001b[1;32mIn[2], line 1\u001b[0m\n\u001b[1;32m----> 1\u001b[0m \u001b[39mimport\u001b[39;00m \u001b[39msetting\u001b[39;00m\n",
+      "\u001b[1;31mModuleNotFoundError\u001b[0m: No module named 'setting'"
+     ]
+    }
+   ],
+   "source": [
+    "import setting"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "base",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.11.5"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
