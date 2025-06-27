@@ -322,8 +322,8 @@ model = Seq2Seq(enc, dec, device)
 
 #%%
 # optimizer 그리고 사전학습된 모델 
-#model.load_state_dict(torch.load('saved_model/seq2seq peptoid_attention_acc_0.965(seqlen18))20240208_Teacher_forced_without_attention_pc.pt'))
-model.load_state_dict(torch.load(os.path.join( weight_save_path, f'E_926.pt')))
+model.load_state_dict(torch.load('saved_model/seq2seq peptoid_attention_acc_0.965(seqlen18))20240208_Teacher_forced_without_attention_pc.pt'))
+#model.load_state_dict(torch.load(os.path.join( weight_save_path, f'E_926.pt')))
 
 optimizer = optim.Adam(model.parameters(), lr = 0.001)
 # criterion = nn.CrossEntropyLoss(reduction = 'none', ignore_index = 0)  # [PAD] index 가 0임
@@ -332,7 +332,7 @@ print(model)
 print("num_parameters of the model: ",  sum(p.numel() for p in model.parameters()))
 
 #%%
-def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  memory, seq_len,  bad_sample_reward):
+def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  seq_len,  bad_sample_reward):
     target_network.train()
     epoch_loss=0
     epoch_reward = 0
@@ -554,7 +554,7 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
         
         length += len(reward_generated_sequence )
 
-        memory.put( epoch, batch1, sample_for_buffer, reward_generated_sequence, indices1 )
+        #memory.put( epoch, batch1, sample_for_buffer, reward_generated_sequence, indices1 )
         
         k += 1
         
@@ -570,50 +570,9 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
     
     # if epoch % 5 == 0:
     #     print("Length of Good sample idx" , len(good_sample_idx))
-    return epoch_loss/ k ,  epoch_reward , np.std(reward_generated_sequence.numpy()) , good_sample_idx_len_epoch, memory, bad_sample_reward  #epoch_accuracy/ j , epoch_top_3_accuracy/ j
+    return epoch_loss/ k ,  epoch_reward , np.std(reward_generated_sequence.numpy()) , good_sample_idx_len_epoch, bad_sample_reward  #epoch_accuracy/ j , epoch_top_3_accuracy/ j
 
 #%%
-class Buffer():
-    def __init__(self):
-        self.M = 10
-        self.action_buffer = torch.zeros(self.M, seq_len, len(new_sequence_list)).float() #(M, 18, 1000)
-        self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq).T, (self.M, len(reward_original_seq))).float() #(M, 1000)
-        
-    def put(self, epoch, sequence_original, generated_sequence, reward_generated_sequence, idx):
-        
-        # original sequence 의 reward vs 생성된 sequence reward 를 비교한다. 
-        # 십입을 기존에 buffer에 있는 max 애들이랑 비교해서 이기면 넣어주네
-        
-        reward_generated_sequence = reward_generated_sequence #* beta
-                
-        reward_comparison = torch.tensor( [ np.array(self.reward_buffer[ epoch % self.M , idx]).tolist(), 
-                                           reward_generated_sequence.squeeze().tolist()] ).T
-        
-        sequence = torch.tensor([sequence_original.tolist(),
-                                 generated_sequence.tolist()]).T
-        
-        argmax = torch.argmax(reward_comparison, axis = 1)
-        maximal = torch.max(reward_comparison, axis =1).values.type(torch.float32)
-        
-        self.action_buffer[ epoch % self.M , : , idx] = sequence[:, torch.arange(len(idx)), argmax].float()
-        self.reward_buffer[ epoch % self.M , idx] = maximal.float() #reward_generated_sequence
-        
-        # 초기화는 할까 말까 고민중
-        # if epoch % self.M == 0 :
-        #     self.action_buffer = torch.zeros(self.M, seq_len, len(augmented_sequence_list))
-        #     self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq), (self.M, len(reward_original_seq)))
-        
-    def sampling(self):
-        actions_array = torch.tensor(self.action_buffer)
-        reward_array = torch.tensor(self.reward_buffer)
-        
-        #print( "good sample percentage in buffer:", round( len(np.where (reward_array > 0.5)[0]) / (self.M * len(reward_original_seq))* 100 , 2) , "%" )
-        
-        sampled_sequence = actions_array[torch.randint(0, self.M, (len(reward_original_seq),)), :, torch.arange(len(reward_original_seq))]
-        #sampled_sequence = actions_array[torch.argmax(reward_array, axis = 0), :, torch.arange(len(reward_original_seq))]
-        
-        return torch.tensor(sampled_sequence)
-
 def epoch_time(start_time, end_time):
     sec = end_time - start_time
     mins = sec // 60
@@ -621,16 +580,15 @@ def epoch_time(start_time, end_time):
     return int(mins), round(remains, 2)
 
 #%%
-CLIP = 1
 loss_list, reward_list, reward_std_list, good_sample_idx_list= [], [], [], []
 
-N_EPOCHS = 574
+N_EPOCHS = 1400
 behavior_network = model
 target_network = model
 # behavior_network = torch.compile(behavior_network)
 # target_network   = torch.compile(target_network)
 #interval = 1
-weight_save_path = os.path.join(SAVED_WEIGHT_PATH, f'TFR_best_REINFORCED/multiplication_250626')
+weight_save_path = os.path.join(SAVED_WEIGHT_PATH, f'TFR_without_buffer_best_REINFORCED/exponential_250626')
 if not os.path.exists(weight_save_path):
     os.makedirs(weight_save_path)
 
@@ -642,17 +600,17 @@ if not os.path.exists(weight_save_path):
 #memory = Buffer()
 bad_sample_reward = torch.zeros((3000,3))
 
-for epoch in tqdm(range(926, N_EPOCHS+ 926, 1)):
+for epoch in tqdm(range(0, N_EPOCHS, 1)):
     #Buffer 사용 
     
-    if epoch >= 10 and epoch % 10 == 0:    
-        sample_data = memory.sampling()
-        train_dataset_trg = MyDataset(torch.tensor(sample_data, dtype = torch.int32))
-        train_dataloader_trg = DataLoader(train_dataset_trg, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
+    # if epoch >= 10 and epoch % 10 == 0:    
+    #     sample_data = memory.sampling()
+    #     train_dataset_trg = MyDataset(torch.tensor(sample_data, dtype = torch.int32))
+    #     train_dataloader_trg = DataLoader(train_dataset_trg, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
         
     start_time = time.time()
 
-    train_loss, train_reward, train_reward_std, len_good_sample_idx, memory, bad_sample_reward = train(target_network, target_network,  optimizer, CLIP, epoch, N_EPOCHS, memory, seq_len,  bad_sample_reward )
+    train_loss, train_reward, train_reward_std, len_good_sample_idx, bad_sample_reward = train(target_network, target_network,  optimizer, CLIP, epoch, N_EPOCHS, seq_len,  bad_sample_reward )
 
     end_time = time.time()
     epoch_mins, epoch_secs = epoch_time(start_time, end_time)
@@ -691,7 +649,7 @@ for epoch in tqdm(range(926, N_EPOCHS+ 926, 1)):
         plt.xlabel("Episode")
         plt.ylabel("Reward")
         plt.show()
-    if epoch == N_EPOCHS -1:
+    if epoch == N_EPOCHS-2:
         print("Last model weight saved")
         torch.save(model.state_dict(), os.path.join( weight_save_path, f'E_{epoch}(last).pt') )       
     #if epoch % 5 == 0 and epoch > 1:
@@ -709,5 +667,5 @@ result_df = pd.DataFrame({'reward': reward_list,
                          'good_samples_num': good_samples_num_list,
                          'loss': loss_list})
 
-result_df.to_csv(os.path.join(RESULT_PATH, 'TFR_with_buffer_exponential2_from926.csv'), index=False)
+result_df.to_csv(os.path.join(RESULT_PATH, 'TFR_without_buffer_exponential.csv'), index=False)
 # %%

@@ -10,8 +10,25 @@ from rdkit.Chem import Descriptors
 from rdkit.ML.Descriptors import MoleculeDescriptors
 from torch.utils.data import DataLoader, Dataset
 
+# 전역 descriptor 계산 초기화 (한 번만 수행)
+_DESCRIPTOR_NAMES = [desc[0] for desc in Descriptors._descList]
+_CALCULATOR = MoleculeDescriptors.MolecularDescriptorCalculator(_DESCRIPTOR_NAMES)
+
+# Encoder 전용 descriptor 이름 22개
+_ENCODER_DESCRIPTOR_NAMES = [
+    'EState_VSA11', 'PEOE_VSA2', 'PEOE_VSA12', 'VSA_EState2', 'EState_VSA1',
+    'Kappa1', 'Chi0', 'HeavyAtomMolWt', 'ExactMolWt', 'Chi1', 'LabuteASA',
+    'FractionCSP3', 'VSA_EState7', 'FpDensityMorgan3', 'SMR_VSA7',
+    'FpDensityMorgan2', 'MolLogP', 'SlogP_VSA6', 'VSA_EState6', 'PEOE_VSA6',
+    'EState_VSA8', 'FpDensityMorgan1'
+]
+
 #setting = open_json('setting.json')
-DATA_PATH = 'c:\\Users\\G\\OneDrive\\바탕 화면\\KIST\\code\\PeptoidGen_ver2025\\1. data'
+DATA_PATH = 'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\PeptoidGen_ver2025\\1. data'
+with open(os.path.join( DATA_PATH,'submonomers_SMILES_dictionary.json')) as f:
+    smiles_dict = json.loads(f.read())
+
+tokenizer = BertTokenizer.from_pretrained( os.path.join( DATA_PATH,'saved_model/peptoidtokenizer'), local_files_only=True) #BertTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False )
 
 class MyDataset(Dataset):
     def __init__(self, data):
@@ -41,7 +58,6 @@ def sequence_flatten(original_sequence_list):
 
 def seq_list_to_ids(seq_list, max_len = 100,  ): # data format: list with strings ['AAAA', 'BBBB', 'CCC', ....]
     
-    tokenizer = BertTokenizer.from_pretrained( os.path.join( DATA_PATH,'saved_model/peptoidtokenizer'), local_files_only=True) #BertTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False )
     pad_id = tokenizer.pad_token_id
     start_id = tokenizer.cls_token_id
     end_id = tokenizer.sep_token_id
@@ -64,6 +80,32 @@ def seq_list_to_ids(seq_list, max_len = 100,  ): # data format: list with string
     
     return dataset
 
+def seq_ids_to_list(id ): # data format: list with strings ['AAAA', 'BBBB', 'CCC', ....]
+    
+    pad_id = tokenizer.pad_token_id
+    start_id = tokenizer.cls_token_id
+    end_id = tokenizer.sep_token_id
+    
+    output_list = [ tokenizer.tokenize(string) for string in seq_list]
+        
+    seq_token_list_src = []
+    seq_token_list_trg = []
+
+    for index in output_list:
+        if len(index) + 1 < max_len:
+            seq_token_list_src.append(  tokenizer.convert_tokens_to_ids(index) + [pad_id] * (max_len - len(index) ))
+            seq_token_list_trg.append(  tokenizer.convert_tokens_to_ids(index) + [pad_id] * (max_len - len(index) ))
+
+        else:
+            seq_token_list_src.append(  tokenizer.convert_tokens_to_ids(index)[:max_len-1] +[end_id] )
+            seq_token_list_trg.append( tokenizer.convert_tokens_to_ids(index) [:max_len-1] +[end_id] )
+            
+    dataset = [torch.tensor(seq_token_list_src), torch.tensor(seq_token_list_trg)]
+    
+    return dataset
+
+
+
 def open_json(file):
     with open(file) as f:
         file = json.load(f)
@@ -75,7 +117,26 @@ def open_txt(file):
     return new_sequence_list
 
 def tokens_to_smiles_to_pc(seq):
-    
+    smiles = ''.join(smiles_dict[t] for t in seq)
+    mol = Chem.MolFromSmiles(smiles)
+    vals = _CALCULATOR.CalcDescriptors(mol)
+    return pd.DataFrame([vals], columns=_DESCRIPTOR_NAMES) 
+
+def tokens_to_smiles_to_pc_encoder(seq):
+    smiles = ''.join(smiles_dict[t] for t in seq)
+    mol = Chem.MolFromSmiles(smiles)
+    feats = [getattr(Descriptors, n)(mol) for n in _ENCODER_DESCRIPTOR_NAMES]
+    return pd.DataFrame([feats], columns=_ENCODER_DESCRIPTOR_NAMES)
+
+# def tokens_to_smiles_to_pc_encoder(seq):
+#     # SMILES 문자열 합치기
+#     smiles = ''.join(smiles_dict[token] for token in seq)
+#     mol = Chem.MolFromSmiles(smiles)
+#     # 선택된 descriptor 계산
+#     features = [getattr(Descriptors, name)(mol) for name in _ENCODER_DESCRIPTOR_NAMES]
+#     return np.array(features, dtype=np.float32).reshape(1, -1)
+
+
     # new_df = pd.DataFrame([] , columns =   ['EState_VSA11', 'PEOE_VSA2', 'PEOE_VSA12', 'VSA_EState2', 'EState_VSA1',
     #    'Kappa1', 'Chi0', 'HeavyAtomMolWt', 'ExactMolWt',  'Chi1','LabuteASA', 
         
@@ -83,26 +144,26 @@ def tokens_to_smiles_to_pc(seq):
     #    'FpDensityMorgan2', 'MolLogP', 'SlogP_VSA6', 'VSA_EState6', 'PEOE_VSA6',
     #    'EState_VSA8', 'FpDensityMorgan1'] )
     
-    with open(os.path.join( DATA_PATH,'submonomers_SMILES_dictionary.json')) as f:
-        smiles_dict = json.loads(f.read())
+    # with open(os.path.join( DATA_PATH,'submonomers_SMILES_dictionary.json')) as f:
+    #     smiles_dict = json.loads(f.read())
     
-    #for i in range(len(tokens_list)):
-    #seq = tokens_list[i]
-    smiles = ''
+    # #for i in range(len(tokens_list)):
+    # #seq = tokens_list[i]
+    # smiles = ''
     
-    for j in list(seq):
-        smiles += smiles_dict[j]
+    # for j in list(seq):
+    #     smiles += smiles_dict[j]
             
-    mols = Chem.MolFromSmiles(smiles)
-    descriptor_names = [desc[0] for desc in Descriptors._descList]
-    # descriptor 계산기 생성
-    calculator = MoleculeDescriptors.MolecularDescriptorCalculator(descriptor_names)
+    # mols = Chem.MolFromSmiles(smiles)
+    # #descriptor_names = [desc[0] for desc in Descriptors._descList]
+    # # descriptor 계산기 생성
+    # #calculator = MoleculeDescriptors.MolecularDescriptorCalculator(descriptor_names)
 
-    # 분자에 대해 descriptor 계산
-    descriptor_values = calculator.CalcDescriptors(mols)
+    # # 분자에 대해 descriptor 계산
+    # # descriptor_values = calculator.CalcDescriptors(mols)
 
-    # 결과를 Pandas 데이터프레임으로 변환
-    df = pd.DataFrame([descriptor_values], columns=descriptor_names)
+    # # 결과를 Pandas 데이터프레임으로 변환
+    # #df = pd.DataFrame([descriptor_values], columns=descriptor_names)
     # properties1 = [ Descriptors.EState_VSA11(mols) , Descriptors.PEOE_VSA2(mols), Descriptors.PEOE_VSA12(mols), 
     #                 Descriptors.VSA_EState2(mols), Descriptors.EState_VSA1(mols), Descriptors.Kappa1(mols), Descriptors.Chi0(mols), 
     #                 Descriptors.HeavyAtomMolWt(mols), Descriptors.ExactMolWt(mols), Descriptors.Chi1(mols), Descriptors.LabuteASA(mols)] 
@@ -113,58 +174,14 @@ def tokens_to_smiles_to_pc(seq):
 
     # properties = properties1 +  properties2 #[1] * (len(corr_feature_list)-10) 
     
-    #new_df = pd.concat([new_df, pd.DataFrame([properties], columns =  corr_feature_list)], axis = 0) #new_df.append(properties)
-                  
-    return df
-
-
-def tokens_to_smiles_to_pc_encoder(seq):
-    
-    new_df = pd.DataFrame([] , columns =   ['EState_VSA11', 'PEOE_VSA2', 'PEOE_VSA12', 'VSA_EState2', 'EState_VSA1',
-       'Kappa1', 'Chi0', 'HeavyAtomMolWt', 'ExactMolWt',  'Chi1','LabuteASA', 
+    # new_df = pd.concat([new_df, pd.DataFrame([properties], columns =  ['EState_VSA11', 'PEOE_VSA2', 'PEOE_VSA12', 'VSA_EState2', 'EState_VSA1',
+    #    'Kappa1', 'Chi0', 'HeavyAtomMolWt', 'ExactMolWt',  'Chi1','LabuteASA', 
         
-        'FractionCSP3', 'VSA_EState7', 'FpDensityMorgan3', 'SMR_VSA7',
-       'FpDensityMorgan2', 'MolLogP', 'SlogP_VSA6', 'VSA_EState6', 'PEOE_VSA6',
-       'EState_VSA8', 'FpDensityMorgan1'] )
-    
-    with open(os.path.join( DATA_PATH,'submonomers_SMILES_dictionary.json')) as f:
-        smiles_dict = json.loads(f.read())
-    
-    #for i in range(len(tokens_list)):
-    #seq = tokens_list[i]
-    smiles = ''
-    
-    for j in list(seq):
-        smiles += smiles_dict[j]
-            
-    mols = Chem.MolFromSmiles(smiles)
-    #descriptor_names = [desc[0] for desc in Descriptors._descList]
-    # descriptor 계산기 생성
-    #calculator = MoleculeDescriptors.MolecularDescriptorCalculator(descriptor_names)
-
-    # 분자에 대해 descriptor 계산
-    # descriptor_values = calculator.CalcDescriptors(mols)
-
-    # 결과를 Pandas 데이터프레임으로 변환
-    #df = pd.DataFrame([descriptor_values], columns=descriptor_names)
-    properties1 = [ Descriptors.EState_VSA11(mols) , Descriptors.PEOE_VSA2(mols), Descriptors.PEOE_VSA12(mols), 
-                    Descriptors.VSA_EState2(mols), Descriptors.EState_VSA1(mols), Descriptors.Kappa1(mols), Descriptors.Chi0(mols), 
-                    Descriptors.HeavyAtomMolWt(mols), Descriptors.ExactMolWt(mols), Descriptors.Chi1(mols), Descriptors.LabuteASA(mols)] 
-
-    properties2 = [Descriptors.FractionCSP3(mols),Descriptors.VSA_EState7(mols),Descriptors.FpDensityMorgan3(mols),Descriptors.SMR_VSA7(mols),
-                    Descriptors.FpDensityMorgan2(mols),Descriptors.MolLogP(mols),Descriptors.SlogP_VSA6(mols),Descriptors.VSA_EState6(mols),
-                    Descriptors.PEOE_VSA6(mols), Descriptors.EState_VSA8(mols), Descriptors.FpDensityMorgan1(mols)]
-
-    properties = properties1 +  properties2 #[1] * (len(corr_feature_list)-10) 
-    
-    new_df = pd.concat([new_df, pd.DataFrame([properties], columns =  ['EState_VSA11', 'PEOE_VSA2', 'PEOE_VSA12', 'VSA_EState2', 'EState_VSA1',
-       'Kappa1', 'Chi0', 'HeavyAtomMolWt', 'ExactMolWt',  'Chi1','LabuteASA', 
-        
-        'FractionCSP3', 'VSA_EState7', 'FpDensityMorgan3', 'SMR_VSA7',
-       'FpDensityMorgan2', 'MolLogP', 'SlogP_VSA6', 'VSA_EState6', 'PEOE_VSA6',
-       'EState_VSA8', 'FpDensityMorgan1'])], axis = 0) #new_df.append(properties)
+    #     'FractionCSP3', 'VSA_EState7', 'FpDensityMorgan3', 'SMR_VSA7',
+    #    'FpDensityMorgan2', 'MolLogP', 'SlogP_VSA6', 'VSA_EState6', 'PEOE_VSA6',
+    #    'EState_VSA8', 'FpDensityMorgan1'])], axis = 0) #new_df.append(properties)
                   
-    return new_df
+    # return new_df
 
 
 def softmax_temp(x, temperature=1.5):
@@ -174,3 +191,4 @@ def softmax_temp(x, temperature=1.5):
     sum_exp_values = torch.sum(exp_values, dim=1, keepdim=True)     
     probabilities = exp_values / sum_exp_values
     return probabilities
+

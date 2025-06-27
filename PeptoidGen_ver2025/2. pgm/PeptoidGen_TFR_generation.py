@@ -22,6 +22,7 @@ from collections import deque, namedtuple
 import pickle, json, joblib
 from tqdm import tqdm 
 import re
+from multiprocessing import Pool
 
 from preprocessing import *
 from reward_function_lgbm import *
@@ -35,13 +36,9 @@ from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 DATA_PATH = 'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\PeptoidGen_ver2025\\1. data'
 PGM_PATH= 'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\\PeptoidGen_ver2025\\2. pgm'
 RESULT_PATH = 'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\PeptoidGen_ver2025\\3. result'
-SAVED_WEIGHT_PATH = f'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\PeptoidGen_ver2025\\1. data\\saved_model_{20250626}'
-if not os.path.exists(SAVED_WEIGHT_PATH):
-    os.makedirs(SAVED_WEIGHT_PATH)
 
 tokenizer = BertTokenizer.from_pretrained('peptoidtokenizer', local_files_only=True)
-
-seed = 250626
+seed = 950410
 random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
@@ -80,11 +77,10 @@ sampled_item_pc_df_for_reward = pd.read_csv(os.path.join(DATA_PATH, 'sampled_ite
 anti_result, hemodel_result = reward_predict(sampled_item_pc_df_for_reward )
 reward_original_seq = 3 * (torch.exp(torch.tensor(anti_result)) -1) * torch.where(torch.tensor(hemodel_result) > 0.5, 1, 0)
 
-
 #%%
 seq_len = 18
 train_dataset = seq_list_to_ids(new_sequence_list, max_len = seq_len)
-batch_size= 343
+batch_size= 350
 
 class MyDataset(Dataset):
     def __init__(self, data):
@@ -98,7 +94,6 @@ class MyDataset(Dataset):
 
 train_dataset_src = MyDataset(train_dataset[0])
 train_dataset_trg = MyDataset(train_dataset[1])
-
 train_dataloader_src =  DataLoader( train_dataset_src, batch_size=batch_size )
 train_dataloader_trg = DataLoader( train_dataset_trg, batch_size=batch_size)
 train_dataloader_src_pc = DataLoader( torch.tensor(sampled_item_pc_df.values, dtype=torch.float32), batch_size=batch_size  )
@@ -119,12 +114,10 @@ class Encoder(nn.Module):
         
     def forward(self, src, src_pc):
 
-        #print("encoder11")
         embedded = self.dropout(self.embedding(src))
 
         outputs, hidden = self.rnn(self.lrelu(embedded))
-        #print("encoder12")
-
+        
         # print("hidden shape", hidden.shape) # [2, batch_size, hid_dim]
         # print("src_pc shape", src_pc.shape) # [batch_size, 22]
 
@@ -133,8 +126,7 @@ class Encoder(nn.Module):
         # print("src_pc shape", src_pc.shape) # [batch_size, 22]
         # print("hidden shape", hidden.shape) # [2, batch_size, hid_dim]
         hidden = torch.cat([hidden, src_pc], axis = 2)
-        #print("encoder13")
-
+        
         #print("hidden shape after concat", hidden.shape) # [2, batch_size, 22+hid_dim]
         hidden = self.pc_linear(hidden)
         
@@ -245,58 +237,53 @@ class Seq2Seq(nn.Module):
        self.softmax = softmax_temp #nn.Softmax(dim = 1)
        
    def forward(self, src, src_pc, trg, teacher_forcing_ratio):
-        # src = [src len, batch size]
-        # trg = [trg len, batch size]
+       # src = [src len, batch size]
+       # trg = [trg len, batch size]
        
-        trg_len = trg.shape[0]
-        batch_size = trg.shape[1]
-        trg_vocab_size = self.decoder.output_dim
+       trg_len = trg.shape[0]
+       batch_size = trg.shape[1]
+       trg_vocab_size = self.decoder.output_dim
        
-        # decoder 결과를 저장할 텐서
-        outputs = torch.zeros(trg_len, batch_size, trg_vocab_size)
-        actions = torch.zeros(trg_len, batch_size)
-
-        #print("Encodr output before encoder")
-
-        # Encoder의 마지막 은닉 상태가 Decoder의 초기 은닉상태로 쓰임
-        enc_output, hidden = self.encoder(src, src_pc)
+       # decoder 결과를 저장할 텐서
+       outputs = torch.zeros(trg_len, batch_size, trg_vocab_size)
+       actions = torch.zeros(trg_len, batch_size)
        
-        #print("Encodr output actions")
+       # Encoder의 마지막 은닉 상태가 Decoder의 초기 은닉상태로 쓰임
+       enc_output, hidden = self.encoder(src, src_pc)
+       
+       # Decoder에 들어갈 첫 input은 <sos> 토큰
+       input = trg[0, :]
 
+       for t in range(0, trg_len):
 
-        # Decoder에 들어갈 첫 input은 <sos> 토큰
-        input = trg[0, :]
-
-        for t in range(0, trg_len):
-            output, hidden, _ = self.decoder(input, src_pc, hidden, enc_output)
-            #print("decoder output actions")
-
-            output = self.softmax(output)
+           output, hidden, _ = self.decoder(input, src_pc, hidden, enc_output)
            
-            if t <= 2 :  #(trg_len *  teacher_forcing_ratio ) :
+           output = self.softmax(output)
+           
+           if t <= 2 :  #(trg_len *  teacher_forcing_ratio ) :
                
-                output[:,[0,1,2,3,4]] = 1e-8
-                outputs[t] = output
+               output[:,[0,1,2,3,4]] = 1e-8
+               outputs[t] = output
 
-                sample = dist.Categorical(probs = output) 
-            
-                action = sample.sample()
-                actions[t] = action
+               sample = dist.Categorical(probs = output) 
+           
+               action = sample.sample()
+               actions[t] = action
                               
-                input = action #trg[t] #action # trg[t] #output.argmax(1) #trg[t]
+               input = action #trg[t] #action # trg[t] #output.argmax(1) #trg[t]
                
-            else:
-                output[:,[1,2,4]] = 1e-8
-                outputs[t] = output
+           else:
+               output[:,[1,2,4]] = 1e-8
+               outputs[t] = output
                
-                sample = dist.Categorical(probs = output) 
+               sample = dist.Categorical(probs = output) 
 
-                action = sample.sample()
-                actions[t] = action
+               action = sample.sample()
+               actions[t] = action
                
-                input = action #trg[t] #action ##output.argmax(1) 
+               input = action #trg[t] #action ##output.argmax(1) 
 
-        return outputs, actions
+       return outputs, actions
 
 #%%
 input_dim = tokenizer.vocab_size #len(SRC.vocab)
@@ -322,28 +309,29 @@ model = Seq2Seq(enc, dec, device)
 
 #%%
 # optimizer 그리고 사전학습된 모델 
-#model.load_state_dict(torch.load('saved_model/seq2seq peptoid_attention_acc_0.965(seqlen18))20240208_Teacher_forced_without_attention_pc.pt'))
-model.load_state_dict(torch.load(os.path.join( weight_save_path, f'E_926.pt')))
-
+model.load_state_dict(torch.load(os.path.join(DATA_PATH, 'saved_model_20250626/TFR_best_REINFORCED/exponential_250626/E_1255.pt')))
 optimizer = optim.Adam(model.parameters(), lr = 0.001)
-# criterion = nn.CrossEntropyLoss(reduction = 'none', ignore_index = 0)  # [PAD] index 가 0임
+#criterion = nn.CrossEntropyLoss(reduction = 'none', ignore_index = 0)  # [PAD] index 가 0임
 
 print(model)
 print("num_parameters of the model: ",  sum(p.numel() for p in model.parameters()))
 
 #%%
-def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  memory, seq_len,  bad_sample_reward):
-    target_network.train()
+def generation(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  seq_len ):
+    target_network.eval()
     epoch_loss=0
     epoch_reward = 0
     length = 0
     neg = -1e18
-    alpha = 0.01
+    alpha = 0.1
     k,j = 0, 0    
     good_sample_idx_len_epoch = 0
     
     #train_dataloader_src_pc = DataLoader( torch.tensor(sampled_item_pc_list.values, dtype=torch.float32), batch_size=batch_size, shuffle=False,num_workers=6, pin_memory=False)
-      #teacher_force_ratio_list = [1.0] * 6000
+    # train_dataloader_src =  DataLoader( train_dataset_src, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False )
+    # train_dataloader_trg = DataLoader( train_dataset_trg, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
+
+    #teacher_force_ratio_list = [1.0] * 6000
     #(batch0, indices0), (batch1, indices1) in zip(train_dataloader_src, train_dataloader_trg)
     
     for (batch1, indices1), (batch2, indices2), (batch3) in zip(train_dataloader_src, train_dataloader_trg, train_dataloader_src_pc):
@@ -385,7 +373,7 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
         
         #beta = []
         #print("len token", len(token))
-
+        
         while i < len(token) :
             
             #print("i" , i)
@@ -466,7 +454,7 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
                 
                 sample_for_buffer[i:i+seq_len] = torch.tensor( [tokenizer.cls_token_id]  + datapoint[:-1].tolist() )
                 mask[i:i+ seq_len] = torch.ones(len(datapoint), dtype = torch.float32)
-
+        
             pc = tokens_to_smiles_to_pc(sample_token)
             sampled_item_pc_list.append(pc)
             sampled_item_token_list.append(sample_token)
@@ -476,8 +464,13 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
             # for j in range(0, len(token), seq_len)]
             # # ▶ Pool 을 이용해 병렬 실행 (코어 수 −1 = 7개 프로세스)
             # #ith Pool(processes=7) as pool:
-            # sampled_item_pc_list = tokens_to_smiles_to_pc  # pool.map(tokens_to_smiles_to_pc, sample_tokens)
+            # sampled_item_pc_list = pool.map(tokens_to_smiles_to_pc, sample_tokens)
+            # sampled_item_token_list = sample_tokens
             
+            # train_dataloader_src_pc = DataLoader(
+            # torch.tensor(sampled_item_pc_list.values, dtype=torch.float32),
+            # batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
+
             i += seq_len
         
         #print("sample_for_buffer", sample_for_buffer[:54])
@@ -505,10 +498,10 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
         antimicrobial_prob, hemodel_prob = reward_predict( pd.concat(sampled_item_pc_list) )
         
         #reward_generated_sequence = torch.tensor(antimicrobial_prob + hemodel_prob)       
-        reward_generated_sequence = 3 * (torch.exp(torch.tensor(antimicrobial_prob)) -1) * torch.where(torch.tensor(hemodel_prob) >= 0.5, 1, 0) 
+        reward_generated_sequence = 3 * (torch.exp(torch.tensor(antimicrobial_prob)) -1) * torch.where(torch.tensor(hemodel_prob) > 0.5, 1, 0) 
         
-        if epoch % 30 == 0:
-            print("reward", reward_generated_sequence)
+        # if epoch % 5 == 0:
+        #     print("reward", reward_generated_sequence)
 
         good_sample_idx = torch.where( (antimicrobial_prob > 0.5 ) & (hemodel_prob > 0.5 ) )[0]
 
@@ -554,160 +547,110 @@ def train(target_network, behavior_network,  optimizer, clip, epoch, n_epochs,  
         
         length += len(reward_generated_sequence )
 
-        memory.put( epoch, batch1, sample_for_buffer, reward_generated_sequence, indices1 )
+        #memory.put( epoch, batch1, sample_for_buffer, reward_generated_sequence, indices1 )
         
         k += 1
         
-        total_loss.backward()
+        #total_loss.backward()
     
         # Gradient exploding 막기 위해 clip
         torch.nn.utils.clip_grad_norm_(target_network.parameters(), clip)
 
-        optimizer.step()
+        #optimizer.step()
         #scheduler.step()
         
         #print("loss", epoch_loss, "len ", k)
     
     # if epoch % 5 == 0:
     #     print("Length of Good sample idx" , len(good_sample_idx))
-    return epoch_loss/ k ,  epoch_reward , np.std(reward_generated_sequence.numpy()) , good_sample_idx_len_epoch, memory, bad_sample_reward  #epoch_accuracy/ j , epoch_top_3_accuracy/ j
+    return epoch_loss/ k ,  reward_generated_sequence , actions, np.std(reward_generated_sequence.numpy()), good_sample_idx   #epoch_accuracy/ j , epoch_top_3_accuracy/ j
 
 #%%
-class Buffer():
-    def __init__(self):
-        self.M = 10
-        self.action_buffer = torch.zeros(self.M, seq_len, len(new_sequence_list)).float() #(M, 18, 1000)
-        self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq).T, (self.M, len(reward_original_seq))).float() #(M, 1000)
+# class Buffer():
+#     def __init__(self):
+#         self.M = 10
+#         self.action_buffer = torch.zeros(self.M, seq_len, len(new_sequence_list)).float() #(M, 18, 1000)
+#         self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq).T, (self.M, len(reward_original_seq))).float() #(M, 1000)
         
-    def put(self, epoch, sequence_original, generated_sequence, reward_generated_sequence, idx):
+#     def put(self, epoch, sequence_original, generated_sequence, reward_generated_sequence, idx):
         
-        # original sequence 의 reward vs 생성된 sequence reward 를 비교한다. 
-        # 십입을 기존에 buffer에 있는 max 애들이랑 비교해서 이기면 넣어주네
+#         # original sequence 의 reward vs 생성된 sequence reward 를 비교한다. 
+#         # 십입을 기존에 buffer에 있는 max 애들이랑 비교해서 이기면 넣어주네
         
-        reward_generated_sequence = reward_generated_sequence #* beta
+#         reward_generated_sequence = reward_generated_sequence #* beta
                 
-        reward_comparison = torch.tensor( [ np.array(self.reward_buffer[ epoch % self.M , idx]).tolist(), 
-                                           reward_generated_sequence.squeeze().tolist()] ).T
+#         reward_comparison = torch.tensor( [ np.array(self.reward_buffer[ epoch % self.M , idx]).tolist(), 
+#                                            reward_generated_sequence.squeeze().tolist()] ).T
         
-        sequence = torch.tensor([sequence_original.tolist(),
-                                 generated_sequence.tolist()]).T
+#         sequence = torch.tensor([sequence_original.tolist(),
+#                                  generated_sequence.tolist()]).T
         
-        argmax = torch.argmax(reward_comparison, axis = 1)
-        maximal = torch.max(reward_comparison, axis =1).values.type(torch.float32)
+#         argmax = torch.argmax(reward_comparison, axis = 1)
+#         maximal = torch.max(reward_comparison, axis =1).values.type(torch.float32)
         
-        self.action_buffer[ epoch % self.M , : , idx] = sequence[:, torch.arange(len(idx)), argmax].float()
-        self.reward_buffer[ epoch % self.M , idx] = maximal.float() #reward_generated_sequence
+#         self.action_buffer[ epoch % self.M , : , idx] = sequence[:, torch.arange(len(idx)), argmax].float()
+#         self.reward_buffer[ epoch % self.M , idx] = maximal.float() #reward_generated_sequence
         
-        # 초기화는 할까 말까 고민중
-        # if epoch % self.M == 0 :
-        #     self.action_buffer = torch.zeros(self.M, seq_len, len(augmented_sequence_list))
-        #     self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq), (self.M, len(reward_original_seq)))
+#         # 초기화는 할까 말까 고민중
+#         # if epoch % self.M == 0 :
+#         #     self.action_buffer = torch.zeros(self.M, seq_len, len(augmented_sequence_list))
+#         #     self.reward_buffer = torch.broadcast_to(torch.tensor(reward_original_seq), (self.M, len(reward_original_seq)))
         
-    def sampling(self):
-        actions_array = torch.tensor(self.action_buffer)
-        reward_array = torch.tensor(self.reward_buffer)
+#     def sampling(self):
+#         actions_array = torch.tensor(self.action_buffer)
+#         reward_array = torch.tensor(self.reward_buffer)
         
-        #print( "good sample percentage in buffer:", round( len(np.where (reward_array > 0.5)[0]) / (self.M * len(reward_original_seq))* 100 , 2) , "%" )
+#         #print( "good sample percentage in buffer:", round( len(np.where (reward_array > 0.5)[0]) / (self.M * len(reward_original_seq))* 100 , 2) , "%" )
         
-        sampled_sequence = actions_array[torch.randint(0, self.M, (len(reward_original_seq),)), :, torch.arange(len(reward_original_seq))]
-        #sampled_sequence = actions_array[torch.argmax(reward_array, axis = 0), :, torch.arange(len(reward_original_seq))]
+#         sampled_sequence = actions_array[torch.randint(0, self.M, (len(reward_original_seq),)), :, torch.arange(len(reward_original_seq))]
+#         #sampled_sequence = actions_array[torch.argmax(reward_array, axis = 0), :, torch.arange(len(reward_original_seq))]
         
-        return torch.tensor(sampled_sequence)
+#         return torch.tensor(sampled_sequence)
 
-def epoch_time(start_time, end_time):
-    sec = end_time - start_time
-    mins = sec // 60
-    remains = sec % 60
-    return int(mins), round(remains, 2)
+# def epoch_time(start_time, end_time):
+#     sec = end_time - start_time
+#     mins = sec // 60
+#     remains = sec % 60
+#     return int(mins), round(remains, 2)
 
 #%%
-CLIP = 1
-loss_list, reward_list, reward_std_list, good_sample_idx_list= [], [], [], []
 
-N_EPOCHS = 574
+N_EPOCHS = 1
 behavior_network = model
 target_network = model
 # behavior_network = torch.compile(behavior_network)
 # target_network   = torch.compile(target_network)
-#interval = 1
-weight_save_path = os.path.join(SAVED_WEIGHT_PATH, f'TFR_best_REINFORCED/multiplication_250626')
-if not os.path.exists(weight_save_path):
-    os.makedirs(weight_save_path)
 
-#%%
-#def main():
-# torch.set_num_threads(8)
-# torch.set_num_interop_threads(8)
-# pool = Pool(processes=7)    
+#best_valid_loss = float('inf')
+#torch.set_num_threads(8)
+#torch.set_num_interop_threads(8)
+#pool = Pool(processes=7)    
 #memory = Buffer()
-bad_sample_reward = torch.zeros((3000,3))
+#bad_sample_reward = torch.zeros((3000,3))
+total_df = pd.DataFrame()
 
-for epoch in tqdm(range(926, N_EPOCHS+ 926, 1)):
+for epoch in tqdm(range(N_EPOCHS)):
     #Buffer 사용 
-    
-    if epoch >= 10 and epoch % 10 == 0:    
-        sample_data = memory.sampling()
-        train_dataset_trg = MyDataset(torch.tensor(sample_data, dtype = torch.int32))
-        train_dataloader_trg = DataLoader(train_dataset_trg, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
+    # if epoch >= 10 and epoch % 10 == 0:    
+    #     sample_data = memory.sampling()
+    #     train_dataset_trg = MyDataset(torch.tensor(sample_data, dtype = torch.int32))
+    #     train_dataloader_trg = DataLoader(train_dataset_trg, batch_size=batch_size, shuffle=False, num_workers=6, pin_memory=False)
         
-    start_time = time.time()
-
-    train_loss, train_reward, train_reward_std, len_good_sample_idx, memory, bad_sample_reward = train(target_network, target_network,  optimizer, CLIP, epoch, N_EPOCHS, memory, seq_len,  bad_sample_reward )
-
-    end_time = time.time()
-    epoch_mins, epoch_secs = epoch_time(start_time, end_time)
-    
-    #scheduler.step()
-    #optimizer.step()
-    loss_list.append(train_loss)
-    reward_list.append(train_reward)
-    reward_std_list.append(train_reward_std)
-    good_sample_idx_list.append(len_good_sample_idx)
-
-    if epoch > 30 : 
-        if train_reward > torch.max(torch.tensor(reward_list[:])).item() :
-            print("Model weight saved")
-            torch.save(model.state_dict(), os.path.join( weight_save_path, f'E_{epoch}.pt'))
-        #elif epoch in [79,80]:
-        #    print("Model weight saved")
-        #    torch.save(model.state_dict(), 'saved_model/TFR_best_REINFORCED/exponential_0930_epoch{}.pt'.format(epoch))
+    #start_time = time.time()
+    with torch.no_grad():
         
-    if epoch % 50 == 0 and epoch > 1:
-        print(f'Episode: {epoch :02} | Time: {epoch_mins}m {epoch_secs}s')
-        print(f'\tTrain Loss: {train_loss:.4f} | Train reward :{train_reward:.4f} ')
-        #print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
-        plt.figure(figsize = (4,3))
-        #plt.plot(np.arange(len(reward_list)), np.array(teacher_force_ratio_list)[:len(loss_list)] , label = 'TF ratio', c = 'g')
-        plt.plot(np.arange(len(good_sample_idx_list)), np.array(good_sample_idx_list), c= 'b', label = '# of good generated samples')
+        train_loss,  reward, actions, train_reward_std, good_sample_idx = generation(target_network, target_network,  optimizer, CLIP, epoch, N_EPOCHS, seq_len)
     
-        plt.plot(np.arange(len(reward_list)), np.array(reward_list)  , c= 'r', label = 'Reward')
-        #plt.fill_between(np.arange(len(reward_list)), np.array(reward_list) - np.array(reward_std_list) , np.array(reward_list) + np.array(reward_std_list), alpha = 0.2  , facecolor = 'r')
-        
-        #plt.plot(np.arange(len(top3_accuracy_list)), np.array(top3_accuracy_list), c= 'b', label=  'Top3')
-        #plt.legend()
-        plt.grid()
-        #plt.ylim(0.0, 0.5)
-        plt.title("Reward plot")
-        plt.xlabel("Episode")
-        plt.ylabel("Reward")
-        plt.show()
-    if epoch == N_EPOCHS -1:
-        print("Last model weight saved")
-        torch.save(model.state_dict(), os.path.join( weight_save_path, f'E_{epoch}(last).pt') )       
-    #if epoch % 5 == 0 and epoch > 1:
-    #    behavior_network.load_state_dict(target_network.state_dict())
-        #print("behavior network updated")
+
+    str_array = np.array(tokenizer.convert_ids_to_tokens(action_list[0])).reshape(-1,18)
+    sequence_list = ['H-' + '-'.join(arr[arr != '[PAD]']) for arr in str_array]
+
+    sub_df = pd.DataFrame({'시퀀스': sequence_list, '리워드': reward.numpy()})
+    sub_df['good_sample_여부'] = np.where(sub_df.index.isin(np.array(good_sample_idx)) ,'Y', 'N')
+    total_df = pd.concat([total_df, sub_df], ignore_index=True)
+
 
 # %%
-
-# %%##########################################################################################
-
-good_samples_num_list = [good_sample_idx for good_sample_idx in good_sample_idx_list]
-
-result_df = pd.DataFrame({'reward': reward_list,
-                         'reward_std': reward_std_list,
-                         'good_samples_num': good_samples_num_list,
-                         'loss': loss_list})
-
-result_df.to_csv(os.path.join(RESULT_PATH, 'TFR_with_buffer_exponential2_from926.csv'), index=False)
+# %%
+total_df.to_csv(os.path.join(RESULT_PATH, 'TFR_exponential_generation_result.csv'), index=False)
 # %%

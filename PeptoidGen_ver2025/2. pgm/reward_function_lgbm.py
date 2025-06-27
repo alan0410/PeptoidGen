@@ -10,13 +10,22 @@ from lightgbm import LGBMClassifier
 from rdkit.ML.Descriptors import MoleculeDescriptors
 import joblib
 import os 
+import torch
 
 #setting = open_json('setting.json')
-DATA_PATH = 'c:\\Users\\G\\OneDrive\\바탕 화면\\KIST\\code\\PeptoidGen_ver2025\\1. data'
+DATA_PATH = 'c:\\Users\\김영성\\Desktop\\PeptoidGen-main\\PeptoidGen_ver2025\\1. data'
 
 with open( os.path.join(DATA_PATH, 'submonomers_SMILES_dictionary.json') ) as f:
     smiles_dict = json.loads(f.read())
 
+# clf1 = joblib.load(os.path.join(DATA_PATH, 'lgb_anti.pkl') )
+# clf2 = joblib.load( os.path.join(DATA_PATH,'lgb_hemolytic.pkl'))
+
+def _load_lgbm_models():
+    global _clf1, _clf2
+    _clf1 = joblib.load(os.path.join(DATA_PATH, 'lgb_anti.pkl'))
+    _clf2 = joblib.load(os.path.join(DATA_PATH,'lgb_hemolytic.pkl'))
+    return _clf1, _clf2
 ###################################
 # def tokens_to_smiles_to_pc(seq):
 
@@ -42,28 +51,27 @@ with open( os.path.join(DATA_PATH, 'submonomers_SMILES_dictionary.json') ) as f:
 
 def reward_predict( src_pc ):
 
-    clf1= LGBMClassifier(
-    max_depth=5, 
-    min_gain_to_split=0, 
-    learning_rate=0.05, 
-    feature_fraction=0.9, 
-    min_child_samples=5,
-    verbose = -1)
+    # clf1= LGBMClassifier(
+    # max_depth=5, 
+    # min_gain_to_split=0, 
+    # learning_rate=0.05, 
+    # feature_fraction=0.9, 
+    # min_child_samples=5,
+    # verbose = -1)
 
-    clf2= LGBMClassifier(
-    max_depth=5, 
-    min_gain_to_split=0, 
-    learning_rate=0.05, 
-    feature_fraction=0.9, 
-    min_child_samples=5,
-    verbose = -1)
+    # clf2= LGBMClassifier(
+    # max_depth=5, 
+    # min_gain_to_split=0, 
+    # learning_rate=0.05, 
+    # feature_fraction=0.9, 
+    # min_child_samples=5,
+    # verbose = -1)
+    clf1, clf2 = _load_lgbm_models()
+    arr = src_pc.values if isinstance(src_pc, pd.DataFrame) else src_pc
+    
+    p1 = clf1.predict_proba(arr)[:, 1]
+    p2 = clf2.predict_proba(arr)[:, 1]
 
-    clf1 = joblib.load(os.path.join(DATA_PATH, 'lgb_anti.pkl') )
-    clf2 = joblib.load( os.path.join(DATA_PATH,'lgb_hemolytic.pkl'))
-
-    result1 = clf1.predict_proba(src_pc)
-    result2 = clf2.predict_proba(src_pc)
-
-    return torch.tensor(result1[:,1]), torch.tensor(result2[:,1])
+    return torch.from_numpy(p1), torch.from_numpy(p2)
 
 
